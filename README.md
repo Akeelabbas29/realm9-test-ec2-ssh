@@ -8,7 +8,7 @@ Terraform project for testing Realm9 end-to-end with **the trickiest output patt
 - `aws_key_pair` registered with the public key
 - `aws_security_group` allowing inbound 22 from `var.allowed_ssh_cidr`
 - `aws_instance` t3.micro running latest Amazon Linux 2023 (AMI looked up via SSM parameter, so always current)
-- Self-contained VPC (10.42.0.0/16) + public subnet + IGW + route table — does not rely on a default VPC, which may have been deleted in security-hardened accounts
+- Reuses the **default VPC** + first available subnet (avoids per-region VPC quota issues; us-east-1's default VPC may have been deleted, hence the `eu-west-2` default region)
 - Encrypted gp3 root volume, IMDSv2 enforced
 
 ## Inputs

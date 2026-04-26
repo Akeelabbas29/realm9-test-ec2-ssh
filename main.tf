@@ -17,46 +17,28 @@ data "aws_ssm_parameter" "al2023_ami" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
-# Pick the first AZ in the region for the public subnet
+# Reuse the default VPC + a default subnet in the first AZ.
+# Avoids hitting the per-region VPC quota; works in any region that
+# still has its default VPC (most regions do; us-east-1 in this account
+# does not, which is why the project defaults to eu-west-2).
+data "aws_vpc" "default" {
+  default = true
+}
+
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
-# Self-contained VPC (default VPC may not exist in security-hardened accounts)
-resource "aws_vpc" "this" {
-  cidr_block           = "10.42.0.0/16"
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-  tags                 = local.common_tags
-}
-
-resource "aws_internet_gateway" "this" {
-  vpc_id = aws_vpc.this.id
-  tags   = local.common_tags
-}
-
-resource "aws_subnet" "public" {
-  vpc_id                  = aws_vpc.this.id
-  cidr_block              = "10.42.1.0/24"
-  availability_zone       = data.aws_availability_zones.available.names[0]
-  map_public_ip_on_launch = true
-  tags                    = merge(local.common_tags, { Tier = "public" })
-}
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.this.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.this.id
+data "aws_subnets" "default_vpc" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
   }
-
-  tags = merge(local.common_tags, { Tier = "public" })
 }
 
-resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.public.id
+# Pick the first subnet in the default VPC for the instance
+data "aws_subnet" "selected" {
+  id = data.aws_subnets.default_vpc.ids[0]
 }
 
 resource "tls_private_key" "ssh" {
@@ -73,7 +55,7 @@ resource "aws_key_pair" "this" {
 resource "aws_security_group" "ssh" {
   name        = "${local.resource_name}-sg"
   description = "Realm9 EC2+SSH test — allow inbound 22"
-  vpc_id      = aws_vpc.this.id
+  vpc_id      = data.aws_vpc.default.id
 
   ingress {
     description = "SSH"
@@ -95,11 +77,12 @@ resource "aws_security_group" "ssh" {
 }
 
 resource "aws_instance" "this" {
-  ami                    = data.aws_ssm_parameter.al2023_ami.value
-  instance_type          = var.instance_type
-  key_name               = aws_key_pair.this.key_name
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.ssh.id]
+  ami                         = data.aws_ssm_parameter.al2023_ami.value
+  instance_type               = var.instance_type
+  key_name                    = aws_key_pair.this.key_name
+  subnet_id                   = data.aws_subnet.selected.id
+  vpc_security_group_ids      = [aws_security_group.ssh.id]
+  associate_public_ip_address = true
 
   metadata_options {
     http_endpoint               = "enabled"
